@@ -1,5 +1,4 @@
 #include <stdio.h>
-#include <stdlib.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <netinet/ip.h>
@@ -12,7 +11,7 @@ int main() {
 	setbuf(stdout, NULL);
  	setbuf(stderr, NULL);
 
-	int server_fd, client_addr_len;
+	unsigned int server_fd, client_addr_len;
 	struct sockaddr_in client_addr;
 	//
 	server_fd = socket(AF_INET, SOCK_STREAM, 0);
@@ -45,11 +44,17 @@ int main() {
 
 	printf("Waiting for a client to connect...\n");
 	client_addr_len = sizeof(client_addr);
-
-	accept(server_fd, (struct sockaddr *) &client_addr, &client_addr_len);
+    int client_fd;
+	if((client_fd = accept(server_fd, (struct sockaddr *) &client_addr, &client_addr_len)) < 0)
+    {
+        printf("Failed to accept connection: %s\n", strerror(errno));
+        return 1;
+    }
 	printf("Client connected\n");
-
+    char resp[] = "HTTP/1.1 200 OK\r\n\r\n";
+    send(client_fd, &resp, strlen(resp), 0);
+	printf("response message sent\n");
 	close(server_fd);
-
+	printf("Connection closed\n");
 	return 0;
 }
