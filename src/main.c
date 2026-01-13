@@ -1,4 +1,7 @@
 #include <stdio.h>
+#include <stdlib.h>
+#include <stdbool.h>
+#include <assert.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <netinet/ip.h>
@@ -13,6 +16,56 @@
             return 0;                                                              \
         }                                                                          \
       } while (0)
+
+typedef struct {
+    char* data;
+    size_t len;
+    size_t capacity;
+} String;
+
+void string_append(String *string, char* data)
+{
+    size_t data_len = strlen(data);
+    if(data_len + string->len + 1> string->capacity)
+    {
+        size_t new_capacity = data_len + string->len + 1 + string->capacity * 2;
+        char* new_pointer = realloc(string->data, new_capacity);
+        assert(new_pointer);
+        string->data = new_pointer;
+        string->capacity = new_capacity;
+    }
+    strcat(string->data, data); 
+    string->len += data_len;
+}
+
+void string_free(String *string)
+{
+    free(string->data);
+    string->data = NULL;
+    string->capacity = 0;
+    string->len = 0;
+}
+
+char* string_to_cstr(String *string)
+{
+    char* buffer = malloc(string->len + 1);
+    assert(buffer);
+    *(char*)mempcpy(buffer, string->data, string->len) = '\0';
+    return buffer;
+}
+
+bool starts_with(const char* haystack, const char* needle)
+{
+    size_t needle_len = strlen(needle);
+    size_t haystack_len = strlen(needle);
+    if(haystack_len < needle_len) return false;
+    for(size_t i = 0; i < needle_len; i++)
+    {
+        if(haystack[i] != needle[i]) return false;
+    }
+    return true;
+}
+
 
 [[nodiscard]]
 int process_request(int client_fd)
@@ -34,12 +87,37 @@ int process_request(int client_fd)
     if(strcmp(req_target, "/") == 0)
     {
         char resp_s[] = "HTTP/1.1 200 OK\r\n\r\n";
-        check_error(send(client_fd, &resp_s, strlen(resp_s), 0));
+        check_error(send(client_fd, resp_s, strlen(resp_s), 0));
     }
     else
     {
-        char resp_f[] = "HTTP/1.1 404 Not Found\r\n\r\n";
-        check_error(send(client_fd, &resp_f, strlen(resp_f), 0));
+        if(starts_with(req_target, "/echo"))
+        {
+            strtok(req_target, "/");
+            char* echo_message = strtok(NULL, "/");
+            if(!echo_message)
+            {
+                char resp_f[] = "HTTP/1.1 404 Not Found\r\n\r\n";
+                check_error(send(client_fd, resp_f, strlen(resp_f), 0));
+                return 1;
+            }
+
+            String resp = {0};
+            string_append(&resp, "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n");
+            char content_len[1024] = {0};
+            sprintf(content_len, "Content-Length: %zu\r\n\r\n", strlen(echo_message));
+            string_append(&resp, content_len);
+            string_append(&resp, echo_message);
+            char* resp_e = string_to_cstr(&resp);
+            check_error(send(client_fd, resp_e, strlen(resp_e), 0));
+            free(resp_e);
+            string_free(&resp);
+        }
+        else
+        {
+            char resp_f[] = "HTTP/1.1 404 Not Found\r\n\r\n";
+            check_error(send(client_fd, resp_f, strlen(resp_f), 0));
+        }
     }
 	printf("response message sent\n");
     return 1;
@@ -98,10 +176,10 @@ int main() {
             result = 1;
         }
         close(client_fd);
+        printf("Connection closed\n");
     }
 
     close(server_fd);
-	printf("Connection closed\n");
 
 	return 1;
 }
