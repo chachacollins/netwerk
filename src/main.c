@@ -9,14 +9,6 @@
 #include <errno.h>
 #include <unistd.h>
 
-#define check_error(func)                                                          \
-      do {                                                                         \
-        if ((func) < 0) {                                                          \
-            printf("Failed " #func " %s\n", strerror(errno));                      \
-            return 0;                                                              \
-        }                                                                          \
-      } while (0)
-
 #define error_defer(func)                                                                      \
     do                                                                                         \
     {                                                                                          \
