@@ -54,19 +54,6 @@ char* string_to_cstr(String *string)
     return buffer;
 }
 
-bool starts_with(const char* haystack, const char* needle)
-{
-    size_t needle_len = strlen(needle);
-    size_t haystack_len = strlen(needle);
-    if(haystack_len < needle_len) return false;
-    for(size_t i = 0; i < needle_len; i++)
-    {
-        if(haystack[i] != needle[i]) return false;
-    }
-    return true;
-}
-
-
 [[nodiscard]]
 int process_request(int client_fd)
 {
@@ -89,35 +76,30 @@ int process_request(int client_fd)
         char resp_s[] = "HTTP/1.1 200 OK\r\n\r\n";
         check_error(send(client_fd, resp_s, strlen(resp_s), 0));
     }
+    else if(strncmp(req_target, "/echo/", 6) == 0)
+    {
+        strtok(req_target, "/");
+        char* echo_message = strtok(NULL, "/");
+        if(!echo_message) echo_message = "";
+
+        String resp = {0};
+        string_append(&resp, "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n");
+        char content_len[1024] = {0};
+        sprintf(content_len, "Content-Length: %zu\r\n\r\n", strlen(echo_message));
+        string_append(&resp, content_len);
+        string_append(&resp, echo_message);
+        char* resp_e = string_to_cstr(&resp);
+
+        check_error(send(client_fd, resp_e, strlen(resp_e), 0));
+
+        free(resp_e);
+        string_free(&resp);
+    }
     else
     {
-        if(starts_with(req_target, "/echo"))
-        {
-            strtok(req_target, "/");
-            char* echo_message = strtok(NULL, "/");
-            if(!echo_message)
-            {
-                char resp_f[] = "HTTP/1.1 404 Not Found\r\n\r\n";
-                check_error(send(client_fd, resp_f, strlen(resp_f), 0));
-                return 1;
-            }
-
-            String resp = {0};
-            string_append(&resp, "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n");
-            char content_len[1024] = {0};
-            sprintf(content_len, "Content-Length: %zu\r\n\r\n", strlen(echo_message));
-            string_append(&resp, content_len);
-            string_append(&resp, echo_message);
-            char* resp_e = string_to_cstr(&resp);
-            check_error(send(client_fd, resp_e, strlen(resp_e), 0));
-            free(resp_e);
-            string_free(&resp);
-        }
-        else
-        {
-            char resp_f[] = "HTTP/1.1 404 Not Found\r\n\r\n";
-            check_error(send(client_fd, resp_f, strlen(resp_f), 0));
-        }
+        printf("request target %s not found\n", req_target);
+        char resp_f[] = "HTTP/1.1 404 Not Found\r\n\r\n";
+        check_error(send(client_fd, resp_f, strlen(resp_f), 0));
     }
 	printf("response message sent\n");
     return 1;
