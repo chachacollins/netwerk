@@ -17,6 +17,18 @@
         }                                                                          \
       } while (0)
 
+#define error_defer(func)                                                                      \
+    do                                                                                         \
+    {                                                                                          \
+       if((func) < 0)                                                                          \
+       {                                                                                       \
+           fprintf(stderr, "ERROR:" __FILE__ ":%d:" #func " %s\n", __LINE__, strerror(errno)); \
+           result = -1;                                                                        \
+           goto defer;                                                                         \
+       }                                                                                       \
+    }                                                                                          \
+    while(0)
+
 typedef struct {
     char* data;
     size_t len;
@@ -57,10 +69,10 @@ char* string_to_cstr(String *string)
 [[nodiscard]]
 int process_request(int client_fd)
 {
-    int result;
+    int result = 0;
 	printf("Client connected\n");
     char buffer[1024] = {0};
-    check_error(recv(client_fd, buffer, sizeof(buffer), 0));
+    error_defer(recv(client_fd, buffer, sizeof(buffer), 0));
     char* req_line = strtok(buffer, "\r\n");
     printf("req_line   = %s\n",req_line);
     char* req_method = strtok(req_line, " ");
@@ -74,7 +86,7 @@ int process_request(int client_fd)
     if(strcmp(req_target, "/") == 0)
     {
         char resp_s[] = "HTTP/1.1 200 OK\r\n\r\n";
-        check_error(send(client_fd, resp_s, strlen(resp_s), 0));
+        error_defer(send(client_fd, resp_s, strlen(resp_s), 0));
     }
     else if(strncmp(req_target, "/echo/", 6) == 0)
     {
@@ -90,7 +102,7 @@ int process_request(int client_fd)
         string_append(&resp, echo_message);
         char* resp_e = string_to_cstr(&resp);
 
-        check_error(send(client_fd, resp_e, strlen(resp_e), 0));
+        error_defer(send(client_fd, resp_e, strlen(resp_e), 0));
 
         free(resp_e);
         string_free(&resp);
@@ -99,47 +111,36 @@ int process_request(int client_fd)
     {
         printf("request target %s not found\n", req_target);
         char resp_f[] = "HTTP/1.1 404 Not Found\r\n\r\n";
-        check_error(send(client_fd, resp_f, strlen(resp_f), 0));
+        error_defer(send(client_fd, resp_f, strlen(resp_f), 0));
     }
 	printf("response message sent\n");
-    return 1;
+defer:
+    close(client_fd);
+    printf("Connection closed\n");
+    return result;
 }
 
 int main() {
-	// Disable output buffering
-	setbuf(stdout, NULL);
- 	setbuf(stderr, NULL);
-
-    int server_fd, result = 0;
+    int server_fd = 0, result = 0;
     unsigned int client_addr_len;
+
 	struct sockaddr_in client_addr;
-	//
 	server_fd = socket(AF_INET, SOCK_STREAM, 0);
 	if (server_fd == -1) {
 		printf("Socket creation failed: %s...\n", strerror(errno));
 		return 1;
 	}
 	int reuse = 1;
-	if (setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse)) < 0) {
-		printf("SO_REUSEADDR failed: %s \n", strerror(errno));
-		return 1;
-	}
+	error_defer(setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse)));
 
 	struct sockaddr_in serv_addr = { .sin_family = AF_INET ,
 									 .sin_port = htons(4221),
 									 .sin_addr = { htonl(INADDR_ANY) },
 									};
-
-	if (bind(server_fd, (struct sockaddr *) &serv_addr, sizeof(serv_addr)) != 0) {
-		printf("Bind failed: %s \n", strerror(errno));
-		return 1;
-	}
+	error_defer(bind(server_fd, (struct sockaddr *) &serv_addr, sizeof(serv_addr)));
 
 	int connection_backlog = 5;
-	if (listen(server_fd, connection_backlog) != 0) {
-		printf("Listen failed: %s \n", strerror(errno));
-		return 1;
-	}
+	error_defer(listen(server_fd, connection_backlog));
     printf("Listening on port: 4221\n");
 
 	printf("Waiting for a client to connect...\n");
@@ -150,18 +151,18 @@ int main() {
         if((client_fd = accept(server_fd, (struct sockaddr *) &client_addr, &client_addr_len)) < 0)
         {
             printf("Failed to accept connection: %s\n", strerror(errno));
-            return 1;
+            continue;
         }
-        if(!process_request(client_fd))
+        printf("Connection Accepted fd = %d\n", client_fd);
+        if(process_request(client_fd) < 0)
         {
             printf("Failed to process connection\n");
-            result = 1;
         }
-        close(client_fd);
-        printf("Connection closed\n");
     }
-
-    close(server_fd);
-
-	return 1;
+defer:
+    if(server_fd)
+    {
+        close(server_fd);
+    }
+	return result;
 }
