@@ -16,7 +16,8 @@ void display_string(String s);
 
 char* string_to_cstr(Arena *arena, const String *s)
 {
-    char* buffer = arena_alloc(arena, (sizeof(char) * s->len) + 1);
+    size_t capacity = (sizeof(char) * s->len) + 1;
+    char* buffer = arena_alloc(arena, capacity);
     *(char*)mempcpy(buffer, s->data, s->len) = '\0';
     return buffer;
 }

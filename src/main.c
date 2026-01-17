@@ -9,6 +9,7 @@
 #include <string.h>
 #include <errno.h>
 #include <unistd.h>
+#include <ctype.h>
 
 #define STI_IMPLEMENTATION
 #include "sti.h"
@@ -33,24 +34,86 @@ void handle_signal(int sig)
     }                                                                                          \
     while(0)
 
+int send_plain_text(Arena* arena, int client_fd, const char* res)
+{
+    int result = 0;
+    String resp = {0};
+    string_concat_cstr(arena, &resp, "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n");
+    char content_len[1024] = {0};
+    sprintf(content_len, "Content-Length: %zu\r\n\r\n", strlen(res));
+    string_concat_cstr(arena, &resp, content_len);
+    string_concat_cstr(arena, &resp, res);
+    char* resp_e = string_to_cstr(arena, &resp);
+
+    error_defer(send(client_fd, resp_e, strlen(resp_e), 0));
+defer:
+    return result;
+}
+
+char* trim_left(char* s)
+{
+    while(isspace(*s)) s++;
+    return s;
+}
+
+typedef struct
+{
+    String* data;
+    size_t len;
+    size_t cap;
+} Strings;
+
+void append_string(Arena* arena, Strings *arr, String s)
+{
+    if(arr->len + 1 > arr->cap)
+    {
+        size_t new_capacity = arr->cap ? arr->cap * 2 : 20;
+        String* newptr = arena_realloc(arena, arr->data, arr->cap, new_capacity);
+        arr->data = newptr;
+        arr->cap = new_capacity;
+    }
+    arr->data[arr->len++] = s;
+}
+
+bool string_startswith_lower(String s1, String s2)
+{
+    if(s1.len < s2.len) return false;
+    for(size_t i = 0; i < s2.len; ++i)
+    {
+        if(tolower(s1.data[i]) != tolower(s2.data[i]))
+            return false;
+    }
+    return true;
+}
+
 [[nodiscard]]
 int process_request(Arena* arena, int client_fd)
 {
-    Arena_Mark mark = arena_set_mark(arena);
+    Arena_Mark mark = arena_snapshot(arena);
     int result = 0;
 	printf("Client connected\n");
     char buffer[1024] = {0};
     error_defer(recv(client_fd, buffer, sizeof(buffer), 0));
+    printf("Request:\n");
+    printf("%s\n", buffer);
     char* req_line = strtok(buffer, "\r\n");
-    printf("req_line   = %s\n",req_line);
-    char* req_method = strtok(req_line, " ");
+    char* ptr = strtok(NULL, "\r\n");
+    char* user_agent = NULL;
+    //TODO: store all these headers in a hashmap
+    while(ptr != NULL)
+    {
+        if(string_startswith_lower(string_from_cstr(ptr), string_from_cstr("user-agent")))
+        {
+            char* user_ag_cpy = strdup(ptr);
+            user_ag_cpy = strtok(user_ag_cpy, ":");
+            user_agent = trim_left(ptr+strlen(user_ag_cpy)+1);
+            free(user_ag_cpy);
+        }
+        ptr = strtok(NULL, "\r\n");
+    }
+    //NOTE: discard the request method
+    (void)strtok(req_line, " ");
     char* req_target = strtok(NULL, " ");
-    char* http_vers = strtok(NULL,  " ");
-
-    printf("req_method = %s\n",req_method);
-    printf("req_target = %s\n",req_target);
-    printf("http_vers  = %s\n",http_vers);
-
     if(strcmp(req_target, "/") == 0)
     {
         char resp_s[] = "HTTP/1.1 200 OK\r\n\r\n";
@@ -58,19 +121,16 @@ int process_request(Arena* arena, int client_fd)
     }
     else if(strncmp(req_target, "/echo/", 6) == 0)
     {
-        strtok(req_target, "/");
+        //NOTE: discard the request target because we already hit the endpoint
+        (void)strtok(req_target, "/");
         char* echo_message = strtok(NULL, "/");
         if(!echo_message) echo_message = "";
-
-        String resp = {0};
-        string_concat_cstr(arena, &resp, "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n");
-        char content_len[1024] = {0};
-        sprintf(content_len, "Content-Length: %zu\r\n\r\n", strlen(echo_message));
-        string_concat_cstr(arena, &resp, content_len);
-        string_concat_cstr(arena, &resp, echo_message);
-        char* resp_e = string_to_cstr(arena, &resp);
-
-        error_defer(send(client_fd, resp_e, strlen(resp_e), 0));
+        error_defer(send_plain_text(arena, client_fd, echo_message));
+    }
+    else if(strncmp(req_target, "/user-agent", 11) == 0)
+    {
+        assert(user_agent);
+        error_defer(send_plain_text(arena, client_fd, trim_left(user_agent)));
     }
     else
     {
@@ -82,7 +142,7 @@ int process_request(Arena* arena, int client_fd)
 defer:
     close(client_fd);
     printf("Connection closed\n");
-    arena_restore_mark(arena, mark);
+    arena_rewind(arena, mark);
     return result;
 }
 

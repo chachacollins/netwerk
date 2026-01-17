@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 CC="gcc"
-CFLAGS="-Wall -Wextra -Werror"
+CFLAGS="-Wall -Wextra -Werror -ggdb"
 SRC="src/main.c"
 
 set -xe
