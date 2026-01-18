@@ -2,6 +2,7 @@
 #include <signal.h>
 #include <stdlib.h>
 #include <stdbool.h>
+#include <stdint.h>
 #include <assert.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -86,6 +87,111 @@ bool string_startswith_lower(String s1, String s2)
     return true;
 }
 
+typedef struct
+{
+    char* key;
+    char* value;
+} Header;
+
+typedef struct
+{
+    char* method;
+    char* version;
+    char* target;
+    Header* headers;
+    char* content;
+} Request;
+
+#define HEADER_TABLE_MAX 20
+
+Header* hm_init(Arena* arena)
+{
+    Header* hm = arena_alloc(arena, sizeof(Header) * HEADER_TABLE_MAX); 
+    memset(hm, 0, sizeof(Header) * HEADER_TABLE_MAX);
+    return hm;
+}
+
+//NOTE: the length is assumed to be at least 2
+uint32_t hash(const char* key, size_t len)
+{
+    return ((uint32_t)(*(uint16_t*)key) << 16) | *(uint16_t*)(key+(len-2));
+}
+
+int hm_insert(Header* hm, Header header)
+{
+    uint32_t i_index = hash(header.key, strlen(header.key)) % HEADER_TABLE_MAX;
+    for(uint32_t i = 0; i < HEADER_TABLE_MAX; i++)
+    {
+        uint32_t index = (i_index + i) % HEADER_TABLE_MAX;
+        Header *slot = &hm[index];
+        if(slot->key != NULL) continue;
+        *slot = header;
+        return 0;
+    }
+    return -1;
+}
+
+Header* hm_get(Header* hm, const char* key)
+{
+    int i_index = hash(key, strlen(key)) % HEADER_TABLE_MAX;
+    for(int i = 0; i < HEADER_TABLE_MAX; i++)
+    {
+        int index = (i_index + i) % HEADER_TABLE_MAX;
+        Header *slot = &hm[index];
+        if(slot->key == NULL) return NULL;
+        if(strcmp(slot->key, key) == 0) return slot;
+    }
+    return NULL;
+}
+
+void hm_display(Header* hm)
+{
+    for(int i = 0; i < HEADER_TABLE_MAX; i++)
+    {
+        Header h = hm[i];
+        printf("%s => %s\n", h.key, h.value);
+    }
+}
+
+char* to_lower(char* s)
+{
+    int len = strlen(s);
+    for(int i = 0; i < len; i++)
+    {
+        if(isalpha(s[i]))
+            s[i] = tolower(s[i]);
+    }
+    return s;
+}
+
+int parse_request(Arena* arena, Request* request, char* buffer)
+{
+    int result = 0;
+    request->headers = hm_init(arena);
+    char* req_line = strtok(buffer, "\r\n");
+    if (!req_line) return -1;
+    char* line = strtok(NULL, "\r\n");
+    while (line != NULL)
+    {
+        char* colon = strchr(line, ':');
+        if (colon) 
+        {
+            *colon = '\0'; 
+            char* key = arena_strdup(arena, to_lower(line));
+            char* val = arena_strdup(arena, trim_left(colon + 1));
+            error_defer(hm_insert(request->headers, (Header){key, val}));
+        }
+        line = strtok(NULL, "\r\n");
+    }
+    request->method  =  strtok(req_line, " ");
+    request->target  =  strtok(NULL, " ");
+    request->version =  strtok(NULL, " ");
+    request->content = NULL;
+
+defer:
+    return result;
+}
+
 [[nodiscard]]
 int process_request(Arena* arena, int client_fd)
 {
@@ -96,45 +202,30 @@ int process_request(Arena* arena, int client_fd)
     error_defer(recv(client_fd, buffer, sizeof(buffer), 0));
     printf("Request:\n");
     printf("%s\n", buffer);
-    char* req_line = strtok(buffer, "\r\n");
-    char* ptr = strtok(NULL, "\r\n");
-    char* user_agent = NULL;
-    //TODO: store all these headers in a hashmap
-    while(ptr != NULL)
-    {
-        if(string_startswith_lower(string_from_cstr(ptr), string_from_cstr("user-agent")))
-        {
-            char* user_ag_cpy = strdup(ptr);
-            user_ag_cpy = strtok(user_ag_cpy, ":");
-            user_agent = trim_left(ptr+strlen(user_ag_cpy)+1);
-            free(user_ag_cpy);
-        }
-        ptr = strtok(NULL, "\r\n");
-    }
-    //NOTE: discard the request method
-    (void)strtok(req_line, " ");
-    char* req_target = strtok(NULL, " ");
-    if(strcmp(req_target, "/") == 0)
+    Request request = {0};
+    error_defer(parse_request(arena, &request, buffer));
+    if(strcmp(request.target, "/") == 0)
     {
         char resp_s[] = "HTTP/1.1 200 OK\r\n\r\n";
         error_defer(send(client_fd, resp_s, strlen(resp_s), 0));
     }
-    else if(strncmp(req_target, "/echo/", 6) == 0)
+    else if(strncmp(request.target, "/echo/", 6) == 0)
     {
         //NOTE: discard the request target because we already hit the endpoint
-        (void)strtok(req_target, "/");
+        (void)strtok(request.target, "/");
         char* echo_message = strtok(NULL, "/");
         if(!echo_message) echo_message = "";
         error_defer(send_plain_text(arena, client_fd, echo_message));
     }
-    else if(strncmp(req_target, "/user-agent", 11) == 0)
+    else if(strncmp(request.target, "/user-agent", 11) == 0)
     {
+        Header* user_agent = hm_get(request.headers, "user-agent");
         assert(user_agent);
-        error_defer(send_plain_text(arena, client_fd, trim_left(user_agent)));
+        error_defer(send_plain_text(arena, client_fd, user_agent->value));
     }
     else
     {
-        printf("request target %s not found\n", req_target);
+        printf("request target %s not found\n", request.target);
         char resp_f[] = "HTTP/1.1 404 Not Found\r\n\r\n";
         error_defer(send(client_fd, resp_f, strlen(resp_f), 0));
     }
