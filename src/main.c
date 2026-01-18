@@ -147,8 +147,8 @@ int parse_request(Arena* arena, Request* request, char* buffer)
         if (colon) 
         {
             *colon = '\0'; 
-            char* key = arena_strdup(arena, to_lower(line));
-            char* val = arena_strdup(arena, trim_left(colon + 1));
+            char* key = to_lower(line);
+            char* val = trim_left(colon + 1);
             error_defer(hm_insert(request->headers, (Header){key, val}));
         }
         line = strtok(NULL, "\r\n");
@@ -162,10 +162,9 @@ defer:
     return result;
 }
 
-[[nodiscard]]
 int process_request(Arena* arena, int client_fd)
 {
-    Arena_Mark mark = arena_snapshot(arena);
+    Arena_Mark mark = arena_set_mark(arena);
     int result = 0;
 	printf("Client connected\n");
     char buffer[1024] = {0};
@@ -203,7 +202,7 @@ int process_request(Arena* arena, int client_fd)
 defer:
     close(client_fd);
     printf("Connection closed\n");
-    arena_rewind(arena, mark);
+    arena_restore_mark(arena, mark);
     return result;
 }
 
@@ -244,13 +243,13 @@ int main()
         if((client_fd = accept(server_fd, (struct sockaddr *) &client_addr, &client_addr_len)) < 0)
         {
             printf("Failed to accept connection: %s\n", strerror(errno));
+            continue;
         }
         printf("Connection Accepted fd = %d\n", client_fd);
         if(process_request(&arena, client_fd) < 0)
         {
             printf("Failed to process connection\n");
         }
-        arena_reset(&arena);
     }
     printf("Shutting down server\n");
 defer:
