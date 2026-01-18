@@ -59,36 +59,6 @@ char* trim_left(char* s)
 
 typedef struct
 {
-    String* data;
-    size_t len;
-    size_t cap;
-} Strings;
-
-void append_string(Arena* arena, Strings *arr, String s)
-{
-    if(arr->len + 1 > arr->cap)
-    {
-        size_t new_capacity = arr->cap ? arr->cap * 2 : 20;
-        String* newptr = arena_realloc(arena, arr->data, arr->cap, new_capacity);
-        arr->data = newptr;
-        arr->cap = new_capacity;
-    }
-    arr->data[arr->len++] = s;
-}
-
-bool string_startswith_lower(String s1, String s2)
-{
-    if(s1.len < s2.len) return false;
-    for(size_t i = 0; i < s2.len; ++i)
-    {
-        if(tolower(s1.data[i]) != tolower(s2.data[i]))
-            return false;
-    }
-    return true;
-}
-
-typedef struct
-{
     char* key;
     char* value;
 } Header;
