@@ -109,7 +109,7 @@ Header* hm_get(Header* hm, const char* key)
         int index = (i_index + i) % HEADER_TABLE_MAX;
         Header *slot = &hm[index];
         if(slot->key == NULL) return NULL;
-        if(strcmp(slot->key, key) == 0) return slot;
+        if(*key == *slot->key && strcmp(slot->key, key) == 0) return slot;
     }
     return NULL;
 }
@@ -162,9 +162,9 @@ defer:
     return result;
 }
 
-int process_request(Arena* arena, int client_fd)
+int process_request(int client_fd)
 {
-    Arena_Mark mark = arena_set_mark(arena);
+    Arena arena = {0};
     int result = 0;
 	printf("Client connected\n");
     char buffer[1024] = {0};
@@ -172,7 +172,7 @@ int process_request(Arena* arena, int client_fd)
     printf("Request:\n");
     printf("%s\n", buffer);
     Request request = {0};
-    error_defer(parse_request(arena, &request, buffer));
+    error_defer(parse_request(&arena, &request, buffer));
     if(strcmp(request.target, "/") == 0)
     {
         char resp_s[] = "HTTP/1.1 200 OK\r\n\r\n";
@@ -184,13 +184,13 @@ int process_request(Arena* arena, int client_fd)
         (void)strtok(request.target, "/");
         char* echo_message = strtok(NULL, "/");
         if(!echo_message) echo_message = "";
-        error_defer(send_plain_text(arena, client_fd, echo_message));
+        error_defer(send_plain_text(&arena, client_fd, echo_message));
     }
     else if(strncmp(request.target, "/user-agent", 11) == 0)
     {
         Header* user_agent = hm_get(request.headers, "user-agent");
         assert(user_agent);
-        error_defer(send_plain_text(arena, client_fd, user_agent->value));
+        error_defer(send_plain_text(&arena, client_fd, user_agent->value));
     }
     else
     {
@@ -202,7 +202,7 @@ int process_request(Arena* arena, int client_fd)
 defer:
     close(client_fd);
     printf("Connection closed\n");
-    arena_restore_mark(arena, mark);
+    arena_free(&arena);
     return result;
 }
 
@@ -212,8 +212,6 @@ int main()
     signal(SIGTERM, handle_signal);
     int server_fd = 0, result = 0;
     unsigned int client_addr_len;
-    Arena arena = {0};
-    arena_alloc(&arena, 10);
 
 	struct sockaddr_in client_addr;
 	server_fd = socket(AF_INET, SOCK_STREAM, 0);
@@ -246,7 +244,7 @@ int main()
             continue;
         }
         printf("Connection Accepted fd = %d\n", client_fd);
-        if(process_request(&arena, client_fd) < 0)
+        if(process_request(client_fd) < 0)
         {
             printf("Failed to process connection\n");
         }
@@ -257,6 +255,5 @@ defer:
     {
         close(server_fd);
     }
-    arena_free(&arena);
 	return result;
 }
