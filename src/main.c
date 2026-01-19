@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <signal.h>
 #include <stdlib.h>
+#include <stdarg.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <assert.h>
@@ -17,6 +18,31 @@
 
 volatile sig_atomic_t running = 1;
 
+typedef enum
+{
+    LOG_KIND_ERROR,
+    LOG_KIND_WARNING,
+    LOG_KIND_SUCCESS,
+    LOG_KIND_INFO,
+} LOG_KIND;
+
+void log_fmt(LOG_KIND kind, char* fmt, ...)
+{
+    va_list ap;
+    va_start(ap, fmt);
+    switch(kind)
+    {
+        case LOG_KIND_ERROR  : fprintf(stderr, "[ERROR]: "); break;
+        case LOG_KIND_WARNING: fprintf(stderr, "[WARNING]: "); break;
+        case LOG_KIND_SUCCESS: fprintf(stderr, "[SUCCESS]: "); break;
+        case LOG_KIND_INFO   : fprintf(stderr, "[INFO]: "); break;
+        default: assert(0 && "Unreachable");
+    }
+    vfprintf(stderr, fmt, ap);
+    fprintf(stderr, "\n");
+    va_end(ap);
+}
+
 void handle_signal(int sig)
 {
     (void)sig;
@@ -28,7 +54,7 @@ void handle_signal(int sig)
     {                                                                                          \
        if((func) < 0)                                                                          \
        {                                                                                       \
-           fprintf(stderr, "ERROR:" __FILE__ ":%d:" #func " %s\n", __LINE__, strerror(errno)); \
+           log_fmt(LOG_KIND_ERROR,__FILE__ ":%d:" #func " %s\n", __LINE__, strerror(errno));   \
            result = -1;                                                                        \
            goto defer;                                                                         \
        }                                                                                       \
@@ -166,11 +192,9 @@ int process_request(int client_fd)
 {
     Arena arena = {0};
     int result = 0;
-	printf("Client connected\n");
+	log_fmt(LOG_KIND_INFO, "Client connected");
     char buffer[1024] = {0};
     error_defer(recv(client_fd, buffer, sizeof(buffer), 0));
-    printf("Request:\n");
-    printf("%s\n", buffer);
     Request request = {0};
     error_defer(parse_request(&arena, &request, buffer));
     if(strcmp(request.target, "/") == 0)
@@ -194,14 +218,14 @@ int process_request(int client_fd)
     }
     else
     {
-        printf("request target %s not found\n", request.target);
+        log_fmt(LOG_KIND_ERROR, "request target %s not found", request.target);
         char resp_f[] = "HTTP/1.1 404 Not Found\r\n\r\n";
         error_defer(send(client_fd, resp_f, strlen(resp_f), 0));
     }
-	printf("response message sent\n");
+	log_fmt(LOG_KIND_INFO, "Response message sent");
 defer:
     close(client_fd);
-    printf("Connection closed\n");
+    log_fmt(LOG_KIND_INFO, "Connection closed");
     arena_free(&arena);
     return result;
 }
@@ -217,7 +241,7 @@ int main()
 	server_fd = socket(AF_INET, SOCK_STREAM, 0);
 	if (server_fd == -1)
     {
-		printf("Socket creation failed: %s...\n", strerror(errno));
+		log_fmt(LOG_KIND_ERROR, "Socket creation failed: %s...\n", strerror(errno));
 		return 1;
 	}
 	int reuse = 1;
@@ -231,25 +255,24 @@ int main()
 
 	int connection_backlog = 5;
 	error_defer(listen(server_fd, connection_backlog));
-    printf("Listening on port: 4221\n");
+    log_fmt(LOG_KIND_INFO, "Listening on port: 4221");
 
-	printf("Waiting for a client to connect...\n");
 	client_addr_len = sizeof(client_addr);
     while(running)
     {
+        log_fmt(LOG_KIND_INFO, "Waiting for a client to connect...\r");
         int client_fd;
         if((client_fd = accept(server_fd, (struct sockaddr *) &client_addr, &client_addr_len)) < 0)
         {
-            printf("Failed to accept connection: %s\n", strerror(errno));
+            log_fmt(LOG_KIND_WARNING, "Failed to accept connection: %s", strerror(errno));
             continue;
         }
-        printf("Connection Accepted fd = %d\n", client_fd);
         if(process_request(client_fd) < 0)
         {
-            printf("Failed to process connection\n");
+            log_fmt(LOG_KIND_WARNING, "Failed to process connection");
         }
     }
-    printf("Shutting down server\n");
+    log_fmt(LOG_KIND_INFO, "Shutting down server");
 defer:
     if(server_fd)
     {
