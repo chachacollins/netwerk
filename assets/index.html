@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="ISO-8859-1">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Collins Chacha - System Programmer</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'JetBrains Mono', monospace;
+            line-height: 1.7;
+            max-width: 700px;
+            margin: 0 auto;
+            padding: 60px 20px;
+            transition: background-color 0.3s, color 0.3s;
+            font-size: 16px;
+        }
+        
+        body.light {
+            background: #e8dfe9;
+            color: #3a3a3a;
+        }
+        
+        body.dark {
+            background: #25232f;
+            color: #c4b8d0;
+        }
+        
+        .theme-toggle {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: none;
+            border: none;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 15px;
+            cursor: pointer;
+            padding: 8px 12px;
+            border-radius: 4px;
+        }
+        
+        .light .theme-toggle {
+            background: #d4c6d9;
+            color: #3a3a3a;
+        }
+        
+        .dark .theme-toggle {
+            background: #352f42;
+            color: #c4b8d0;
+        }
+        
+        h1 {
+            font-size: 32px;
+            font-weight: 700;
+            margin-bottom: 8px;
+            letter-spacing: -0.5px;
+        }
+        
+        h1:before {
+            content: "# ";
+            opacity: 1;
+        }
+        
+        .light h1 {
+            color: #5a3d6a;
+        }
+        
+        .dark h1 {
+            color: #a895b9;
+        }
+        
+        h2 {
+            font-size: 23px;
+            font-weight: 550;
+            margin-top: 48px;
+            margin-bottom: 24px;
+            text-transform: lowercase;
+            padding-bottom: 8px;
+        }
+        
+        h2:before {
+            content: "## ";
+            opacity: 1;
+        }
+        
+        .light h2 {
+            border-bottom: 1px solid #c4b4c9;
+            color: #5a3d6a;
+        }
+        
+        .dark h2 {
+            border-bottom: 1px solid #3a3650;
+            color: #a895b9;
+        }
+        
+        p {
+            margin-bottom: 16px;
+            font-size: 16px;
+        }
+        
+        a {
+            text-decoration: underline;
+            transition: color 0.2s;
+        }
+        
+        .light a {
+            color: #6a4d7a;
+        }
+        
+        .dark a {
+            color: #b9a8c8;
+        }
+        
+        .light a:hover {
+            color: #5a3d6a;
+        }
+        
+        .dark a:hover {
+            color: #c4b8d0;
+        }
+        
+        ul {
+            list-style: none;
+            margin-bottom: 24px;
+        }
+        
+        li {
+            margin-bottom: 12px;
+            font-size: 16px;
+            padding-left: 24px;
+            position: relative;
+        }
+        
+        li:before {
+            content: "- ";
+            position: absolute;
+            left: 0;
+        }
+        
+        .light li:before {
+            color: #8a6f98;
+        }
+        
+        .dark li:before {
+            color: #7a6a8a;
+        }
+        
+        .subtitle {
+            font-size: 16px;
+            margin-bottom: 32px;
+        }
+        
+        .light .subtitle {
+            color: #6a5d72;
+        }
+        
+        .dark .subtitle {
+            color: #988ba3;
+        }
+        
+        .project {
+            margin-bottom: 32px;
+        }
+        
+        .project-title {
+            font-weight: 700;
+            margin-bottom: 4px;
+        }
+        
+        .contact {
+            margin-top: 48px;
+            padding-top: 24px;
+        }
+        
+        .light .contact {
+            border-top: 1px solid #c4b4c9;
+        }
+        
+        .dark .contact {
+            border-top: 1px solid #3a3650;
+        }
+    </style>
+</head>
+<body class="light">
+    <button class="theme-toggle" onclick="toggleTheme()">[toggle theme]</button>
+    
+    <header>
+        <h1>Collins Chacha</h1>
+        <p class="subtitle">System Programmer</p>
+    </header>
+
+    <section>
+        <h2>about</h2>
+        <p>I write low-level code that makes computers work. My focus is on operating systems, kernel development, and performance-critical system software.</p>
+        <p>Currently working on distributed systems and concurrent programming challenges.</p>
+    </section>
+
+    <section>
+        <h2>projects</h2>
+        
+        <div class="project">
+            <div class="project-title">Custom Memory Allocator</div>
+            <p>High-performance malloc implementation with reduced fragmentation. Written in C, 30% faster than glibc malloc for specific workloads.</p>
+        </div>
+        
+        <div class="project">
+            <div class="project-title">Kernel Module for Network Monitoring</div>
+            <p>Linux kernel module for packet inspection and traffic analysis. Handles millions of packets per second with minimal overhead.</p>
+        </div>
+        
+        <div class="project">
+            <div class="project-title">Thread Pool Library</div>
+            <p>Lock-free work-stealing thread pool in Rust. Designed for high-throughput parallel workloads with minimal contention.</p>
+        </div>
+    </section>
+
+    <section class="contact">
+        <h2>contact</h2>
+        <p>
+            email: <a href="mailto:collinschacha@hotmail.com">collinschacha@hotmail.com</a><br>
+            github: <a href="https://github.com/chachacollins">github.com/chachacollins</a>
+        </p>
+    </section>
+
+    <script>
+        function toggleTheme() {
+            const body = document.body;
+            if (body.classList.contains('light')) {
+                body.classList.remove('light');
+                body.classList.add('dark');
+                localStorage.setItem('theme', 'dark');
+            } else {
+                body.classList.remove('dark');
+                body.classList.add('light');
+                localStorage.setItem('theme', 'light');
+            }
+        }
+
+        const savedTheme = localStorage.getItem('theme') || 'light';
+        document.body.classList.remove('light', 'dark');
+        document.body.classList.add(savedTheme);
+    </script>
+</body>
+</html>

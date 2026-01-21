@@ -44,6 +44,47 @@ void log_fmt(LOG_KIND kind, char* fmt, ...)
     va_end(ap);
 }
 
+char* read_file(Arena* arena, const char* filepath)
+{
+    char* buffer = NULL;
+    int result = 1;
+    FILE *file = fopen(filepath, "rb");
+    if(!file)
+    {
+        log_fmt(LOG_KIND_ERROR, "could not open %s: %s", filepath, strerror(errno));
+        result = 0;
+        goto defer;
+    }
+    if(fseek(file, 0, SEEK_END) < 0)
+    {
+        log_fmt(LOG_KIND_ERROR, "could not seek_end %s: %s", filepath, strerror(errno));
+        result = 0;
+        goto defer;
+    }
+    size_t file_size = ftell(file);
+    if(fseek(file, 0, SEEK_SET) < 0)
+    {
+        log_fmt(LOG_KIND_ERROR, "could not seek_set %s: %s\n", filepath, strerror(errno));
+        result = 0;
+        goto defer;
+    }
+    buffer = arena_alloc(arena, (sizeof(char) * file_size) + 1);
+    size_t read_bytes = fread(buffer, sizeof(char), file_size, file);
+    if(read_bytes < file_size)
+    {
+        log_fmt(LOG_KIND_ERROR, "could not read bytes %s", filepath);
+        result = 0;
+        goto defer;
+    }
+    *(buffer+file_size+1) = '\0';
+defer:
+    if(file)
+    {
+        fclose(file);
+    }
+    return result ? assert(buffer), buffer : NULL;
+}
+
 void handle_signal(int sig)
 {
     (void)sig;
@@ -207,8 +248,11 @@ int create_response(Arena *arena, Response *response, const Request* request)
     if(strcmp(request->target, "/") == 0)
     {
         response->status = RES_OK;
-        response->headers = NULL;
-        response->body = NULL;
+        char* homepage = read_file(arena, "assets/index.html");
+        hm_insert(response->headers, (Header) {"Content-Type", "text/html"});
+        char* content_len = arena_sprintf(arena, "%zu", strlen(homepage));
+        hm_insert(response->headers, (Header) {"Content-Length", content_len});
+        response->body = homepage;
     }
     else if(strncmp(request->target, "/echo/", 6) == 0)
     {
@@ -345,7 +389,9 @@ int main()
             log_fmt(LOG_KIND_WARNING, "Failed to accept connection: %s", strerror(errno));
             continue;
         }
+        //TODO: implement a thread pool or event loop
         int *new_sock = malloc(sizeof(int));
+        assert_non_null(new_sock);
         *new_sock = client_fd;
         pthread_t thread;
         pthread_create(&thread, NULL, process_request, new_sock);
