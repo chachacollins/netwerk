@@ -370,14 +370,14 @@ int main()
 	error_defer(setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse)));
 
 	struct sockaddr_in serv_addr = { .sin_family = AF_INET ,
-									 .sin_port = htons(4221),
+									 .sin_port = htons(80),
 									 .sin_addr = { htonl(INADDR_ANY) },
 									};
 	error_defer(bind(server_fd, (struct sockaddr *) &serv_addr, sizeof(serv_addr)));
 
 	int connection_backlog = 5;
 	error_defer(listen(server_fd, connection_backlog));
-    log_fmt(LOG_KIND_INFO, "Listening on port: 4221");
+    log_fmt(LOG_KIND_INFO, "Listening on port: 80");
 
 	client_addr_len = sizeof(client_addr);
     while(running)
