@@ -76,7 +76,7 @@ char* read_file(Arena* arena, const char* filepath)
         result = 0;
         goto defer;
     }
-    *(buffer+file_size+1) = '\0';
+    *(buffer+file_size) = '\0';
 defer:
     if(file)
     {
