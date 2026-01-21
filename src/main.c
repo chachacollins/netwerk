@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <pthread.h>
 #include <signal.h>
 #include <stdlib.h>
 #include <stdarg.h>
@@ -211,7 +212,6 @@ int create_response(Arena *arena, Response *response, const Request* request)
     }
     else if(strncmp(request->target, "/echo/", 6) == 0)
     {
-        log_fmt(LOG_KIND_INFO, "echo endpoint hit");
         //NOTE: discard the request->target because we already hit the endpoint
         (void)strtok(request->target, "/");
         char* echo_message = strtok(NULL, "/");
@@ -279,9 +279,10 @@ defer:
     return result;
 }
 
-int process_request(const int client_fd)
+void* process_request(void* arg)
 {
 	log_fmt(LOG_KIND_INFO, "Client connected");
+    const int client_fd = *(int*)arg;
     Arena arena = {0};
     int result = 0;
     char buffer[1024] = {0};
@@ -297,13 +298,18 @@ int process_request(const int client_fd)
 	log_fmt(LOG_KIND_INFO, "Response message sent");
 defer:
     close(client_fd);
+    free((int*)arg);
     log_fmt(LOG_KIND_INFO, "Connection closed");
     arena_free(&arena);
-    return result;
+    //TODO: figure out what to do with the result
+    (void)result;
+    return NULL;
 }
 
 int main() 
 {
+    setbuf(stdout, NULL);
+ 	setbuf(stderr, NULL);
     signal(SIGINT, handle_signal);
     signal(SIGTERM, handle_signal);
     int server_fd = 0, result = 0;
@@ -339,10 +345,11 @@ int main()
             log_fmt(LOG_KIND_WARNING, "Failed to accept connection: %s", strerror(errno));
             continue;
         }
-        if(process_request(client_fd) < 0)
-        {
-            log_fmt(LOG_KIND_WARNING, "Failed to process connection");
-        }
+        int *new_sock = malloc(sizeof(int));
+        *new_sock = client_fd;
+        pthread_t thread;
+        pthread_create(&thread, NULL, process_request, new_sock);
+        pthread_detach(thread);
     }
     log_fmt(LOG_KIND_INFO, "Shutting down server");
 defer:
