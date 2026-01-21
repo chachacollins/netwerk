@@ -1,5 +1,5 @@
-#ifndef ARENA_H
 //based on TSODING's arena implementation
+#ifndef ARENA_H
 #define ARENA_H
 #include <assert.h>
 #include <stdint.h>
@@ -34,6 +34,8 @@ void  arena_reset(Arena *arena);
 #define arena_set_mark(a) ((Arena_Mark) {.ptr = (a)->end, .count = (a)->end->count})
 void arena_restore_mark(Arena *arena, Arena_Mark mark);
 void  arena_display(Arena *arena);
+char *arena_sprintf(Arena *a, const char *format, ...);
+char *arena_vsprintf(Arena *a, const char *format, va_list args);
 
 #ifdef ARENA_IMPLEMENTATION
 Region* new_region(size_t size)
@@ -138,6 +140,30 @@ void arena_display(Arena *arena)
     {
         print_region(p);
     }
+}
+
+char *arena_vsprintf(Arena *a, const char *format, va_list args)
+{
+    va_list args_copy;
+    va_copy(args_copy, args);
+    int n = vsnprintf(NULL, 0, format, args_copy);
+    va_end(args_copy);
+
+    assert(n >= 0);
+    char *result = (char*)arena_alloc(a, n + 1);
+    vsnprintf(result, n + 1, format, args);
+
+    return result;
+}
+
+char *arena_sprintf(Arena *a, const char *format, ...)
+{
+    va_list args;
+    va_start(args, format);
+    char *result = arena_vsprintf(a, format, args);
+    va_end(args);
+
+    return result;
 }
 
 #endif //ARENA_IMPLEMENTATION

@@ -54,28 +54,23 @@ void handle_signal(int sig)
     {                                                                                          \
        if((func) < 0)                                                                          \
        {                                                                                       \
-           log_fmt(LOG_KIND_ERROR,__FILE__ ":%d:" #func " %s\n", __LINE__, strerror(errno));   \
+           log_fmt(LOG_KIND_ERROR,__FILE__ ":%d:" #func " %s", __LINE__, strerror(errno));     \
            result = -1;                                                                        \
            goto defer;                                                                         \
        }                                                                                       \
     }                                                                                          \
     while(0)
-
-int send_plain_text(Arena* arena, int client_fd, const char* res)
-{
-    int result = 0;
-    String resp = {0};
-    string_concat_cstr(arena, &resp, "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n");
-    char content_len[1024] = {0};
-    sprintf(content_len, "Content-Length: %zu\r\n\r\n", strlen(res));
-    string_concat_cstr(arena, &resp, content_len);
-    string_concat_cstr(arena, &resp, res);
-    char* resp_e = string_to_cstr(arena, &resp);
-
-    error_defer(send(client_fd, resp_e, strlen(resp_e), 0));
-defer:
-    return result;
-}
+#define assert_non_null(expr)                                                                         \
+    do                                                                                                \
+    {                                                                                                 \
+        if((expr) == NULL)                                                                            \
+        {                                                                                             \
+           log_fmt(LOG_KIND_ERROR,__FILE__ ":%d:" #expr " is expected to be not null", __LINE__);     \
+           result = -1;                                                                               \
+           goto defer;                                                                                \
+        }                                                                                             \
+    }                                                                                                 \
+    while(0)
 
 char* trim_left(char* s)
 {
@@ -97,6 +92,20 @@ typedef struct
     Header* headers;
     char* content;
 } Request;
+
+typedef enum
+{
+    RES_OK = 200,
+    RES_NOT_FOUND = 404,
+} RES_STATUS;
+
+typedef struct
+{
+    Header* headers;
+    char* version;
+    char* body;
+    RES_STATUS status;
+} Response;
 
 #define HEADER_TABLE_MAX 20
 
@@ -188,40 +197,103 @@ defer:
     return result;
 }
 
-int process_request(int client_fd)
+int create_response(Arena *arena, Response *response, const Request* request)
 {
-    Arena arena = {0};
     int result = 0;
-	log_fmt(LOG_KIND_INFO, "Client connected");
-    char buffer[1024] = {0};
-    error_defer(recv(client_fd, buffer, sizeof(buffer), 0));
-    Request request = {0};
-    error_defer(parse_request(&arena, &request, buffer));
-    if(strcmp(request.target, "/") == 0)
+    assert_non_null(request->target);
+    response->version =  "HTTP/1.1 ";
+    response->headers = hm_init(arena);
+    if(strcmp(request->target, "/") == 0)
     {
-        char resp_s[] = "HTTP/1.1 200 OK\r\n\r\n";
-        error_defer(send(client_fd, resp_s, strlen(resp_s), 0));
+        response->status = RES_OK;
+        response->headers = NULL;
+        response->body = NULL;
     }
-    else if(strncmp(request.target, "/echo/", 6) == 0)
+    else if(strncmp(request->target, "/echo/", 6) == 0)
     {
-        //NOTE: discard the request target because we already hit the endpoint
-        (void)strtok(request.target, "/");
+        log_fmt(LOG_KIND_INFO, "echo endpoint hit");
+        //NOTE: discard the request->target because we already hit the endpoint
+        (void)strtok(request->target, "/");
         char* echo_message = strtok(NULL, "/");
         if(!echo_message) echo_message = "";
-        error_defer(send_plain_text(&arena, client_fd, echo_message));
+        response->status = RES_OK;
+        hm_insert(response->headers, (Header) {"Content-Type", "text/plain"});
+        char* content_len = arena_sprintf(arena, "%zu", strlen(echo_message));
+        hm_insert(response->headers, (Header) {"Content-Length", content_len});
+        response->body = echo_message;
     }
-    else if(strncmp(request.target, "/user-agent", 11) == 0)
+    else if(strncmp(request->target, "/user-agent", 11) == 0)
     {
-        Header* user_agent = hm_get(request.headers, "user-agent");
-        assert(user_agent);
-        error_defer(send_plain_text(&arena, client_fd, user_agent->value));
+        Header* user_agent = hm_get(request->headers, "user-agent");
+        assert_non_null(user_agent);
+        response->status = RES_OK;
+        hm_insert(response->headers, (Header) {"Content-Type", "text/plain"});
+        char* content_len = arena_sprintf(arena, "%zu", strlen(user_agent->value));
+        hm_insert(response->headers, (Header) {"Content-Length", content_len});
+        response->body = user_agent->value;
     }
     else
     {
-        log_fmt(LOG_KIND_ERROR, "request target %s not found", request.target);
-        char resp_f[] = "HTTP/1.1 404 Not Found\r\n\r\n";
-        error_defer(send(client_fd, resp_f, strlen(resp_f), 0));
+        response->status  = RES_NOT_FOUND;
+        response->headers = NULL;
+        response->body    = NULL;
+        log_fmt(LOG_KIND_ERROR, "request->target %s not found", request->target);
     }
+defer:
+    return result;
+}
+
+int send_response(Arena* arena, const int client_fd,  const Response *res)
+{
+    int result = 0;
+    String res_msg = {0};
+    string_concat_cstr(arena, &res_msg, res->version);
+    switch(res->status)
+    {
+        case RES_OK: 
+            string_concat_cstr(arena, &res_msg, "200 OK");
+            break;
+        case RES_NOT_FOUND: 
+            string_concat_cstr(arena, &res_msg, "404 Not Found");
+            break;
+    }
+    string_concat_cstr(arena, &res_msg, "\r\n");
+    if(res->headers != NULL)
+    {
+        for(size_t i = 0; i < HEADER_TABLE_MAX; i++)
+        {
+            Header h = res->headers[i];
+            if(h.key == NULL) continue;
+            char* content_type = arena_sprintf(arena, "%s: %s\r\n", h.key, h.value);
+            string_concat_cstr(arena, &res_msg, content_type);
+        }
+    }
+    string_concat_cstr(arena, &res_msg, "\r\n");
+    if(res->body != NULL)
+    {
+        string_concat_cstr(arena, &res_msg, res->body);
+    }
+    char* resp = string_to_cstr(arena, &res_msg);
+    error_defer(send(client_fd, resp, strlen(resp), 0));
+defer:
+    return result;
+}
+
+int process_request(const int client_fd)
+{
+	log_fmt(LOG_KIND_INFO, "Client connected");
+    Arena arena = {0};
+    int result = 0;
+    char buffer[1024] = {0};
+    error_defer(recv(client_fd, buffer, sizeof(buffer), 0));
+
+    Request request = {0};
+    error_defer(parse_request(&arena, &request, buffer));
+
+    Response response = {0};
+    error_defer(create_response(&arena, &response, &request));
+
+    error_defer(send_response(&arena, client_fd, &response));
 	log_fmt(LOG_KIND_INFO, "Response message sent");
 defer:
     close(client_fd);
