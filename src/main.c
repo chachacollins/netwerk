@@ -385,7 +385,7 @@ int create_response(Arena *arena, const int client_fd, Response *response, const
     int result = 0;
 	struct sockaddr_in client_addr;
     unsigned int client_addr_len;
-    error_defer(getsockname(client_fd, (struct sockaddr *) &client_addr, &client_addr_len));
+    error_defer(getpeername(client_fd, (struct sockaddr *) &client_addr, &client_addr_len));
     char* ip_addr = inet_ntoa(client_addr.sin_addr);
     Client client = {ip_addr, 1};
     Client* flagged_ip = cm_get(&flagged_ips, client);
