@@ -327,11 +327,15 @@ ClientMap cm_create(void)
 {
     pthread_mutex_t mutex;
     pthread_mutex_init(&mutex, NULL);
+    
+    size_t initial_cap = 20;
+    Client* clients = calloc(initial_cap, sizeof(Client));
+    
     return (ClientMap) {
         .mutex = mutex,
         .len = 0,
-        .cap = 0,
-        .clients = NULL,
+        .cap = initial_cap,
+        .clients = clients,
     };
 }
 
