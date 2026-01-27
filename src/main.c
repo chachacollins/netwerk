@@ -1,18 +1,19 @@
-#include <stdio.h>
+#include <arpa/inet.h>
+#include <assert.h>
+#include <ctype.h>
+#include <errno.h>
+#include <netinet/in.h>
+#include <netinet/ip.h>
 #include <pthread.h>
 #include <signal.h>
-#include <stdlib.h>
 #include <stdarg.h>
 #include <stdbool.h>
 #include <stdint.h>
-#include <assert.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <netinet/ip.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
-#include <errno.h>
+#include <sys/socket.h>
 #include <unistd.h>
-#include <ctype.h>
 
 #define STI_IMPLEMENTATION
 #include "sti.h"
@@ -126,6 +127,20 @@ typedef struct
     char* value;
 } Header;
 
+typedef struct 
+{
+    char* addr;
+    char strikes;
+} Client;
+
+typedef struct
+{
+    Client* clients;
+    size_t cap;
+    size_t len;
+    pthread_mutex_t mutex;
+} ClientMap;
+
 typedef struct
 {
     char* method;
@@ -151,17 +166,23 @@ typedef struct
 
 #define HEADER_TABLE_MAX 20
 
+uint32_t hash(const char* key, size_t len) 
+{
+    uint32_t hash = 2166136261u;
+    for (size_t i = 0; i < len; i++)
+    {
+        hash ^= (uint8_t)key[i];
+        hash *= 16777619u;
+    }
+    return hash;
+}
+
+
 Header* hm_init(Arena* arena)
 {
     Header* hm = arena_alloc(arena, sizeof(Header) * HEADER_TABLE_MAX); 
     memset(hm, 0, sizeof(Header) * HEADER_TABLE_MAX);
     return hm;
-}
-
-//NOTE: the length is assumed to be at least 2
-uint32_t hash(const char* key, size_t len)
-{
-    return ((uint32_t)(*(uint16_t*)key) << 16) | *(uint16_t*)(key+(len-2));
 }
 
 int hm_insert(Header* hm, Header header)
@@ -199,6 +220,122 @@ void hm_display(Header* hm)
         printf("%s => %s\n", h.key, h.value);
     }
 }
+
+
+bool cm_insert(ClientMap *cm, Client client);
+
+bool increase_map_cap(ClientMap *cm)
+{
+    size_t old_cap = cm->cap;
+    Client* old_clients = cm->clients;
+
+    size_t new_cap = old_cap ? old_cap * 2 : 20;
+    Client* new_ptr = calloc(new_cap, sizeof(Client));
+    
+    if (!new_ptr) return false;
+    cm->cap = new_cap;
+    cm->clients = new_ptr;
+    cm->len = 0;
+    for (size_t i = 0; i < old_cap; i++)
+    {
+        if (old_clients[i].addr != NULL)
+        {
+            cm_insert(cm, old_clients[i]);
+        }
+    }
+    free(old_clients);
+    return true;
+}
+
+bool cm_insert(ClientMap *cm, Client client)
+{
+    pthread_mutex_lock(&cm->mutex);
+    if (cm->len >= cm->cap * 0.7) 
+    {
+        if (!increase_map_cap(cm))
+        {
+            pthread_mutex_unlock(&cm->mutex);
+            return false;
+        }
+    }
+
+    size_t i_index = hash(client.addr, strlen(client.addr)) % cm->cap;
+    bool is_inserted = false;
+    for (size_t i = 0; i < cm->cap; i++)
+    {
+        size_t index = (i_index + i) % cm->cap;
+        Client* slot = &cm->clients[index];
+
+        if (slot->addr == NULL)
+        {
+            *slot = client;
+            cm->len++;
+            is_inserted = true;
+			break;
+        }
+        if (strcmp(slot->addr, client.addr) == 0)
+        {
+            *slot = client;
+            is_inserted = true;
+			break;
+        }
+    }
+    pthread_mutex_unlock(&cm->mutex);
+    return is_inserted;
+}
+
+Client* cm_get(ClientMap *cm, Client client)
+{
+    pthread_mutex_lock(&cm->mutex);
+    size_t i_index = hash(client.addr, strlen(client.addr)) % cm->cap; 
+    Client* slot = NULL;
+    for (size_t i = 0; i < cm->cap; i++)
+    {
+        size_t index = (i_index + i) % cm->cap;
+        slot = &cm->clients[index];
+        if (slot->addr != NULL && strcmp(slot->addr, client.addr) == 0) break;
+    }
+    pthread_mutex_unlock(&cm->mutex);
+    return slot;
+}
+
+void cm_display(ClientMap *cm)
+{
+    for (size_t i = 0; i < cm->cap; i++)
+    {
+        Client client = cm->clients[i];
+        if(client.addr)
+            printf("%s => strikes: %d\n", client.addr, client.strikes);
+    }
+}
+
+void cm_destroy(ClientMap *cm)
+{
+    for (size_t i = 0; i < cm->cap; i++)
+    {
+        Client client = cm->clients[i];
+        if(client.addr)
+           free(client.addr); 
+    }
+    free(cm->clients);
+    cm->len = 0;
+    cm->cap = 0;
+    pthread_mutex_destroy(&cm->mutex);
+}
+
+ClientMap cm_create(void)
+{
+    pthread_mutex_t mutex;
+    pthread_mutex_init(&mutex, NULL);
+    return (ClientMap) {
+        .mutex = mutex,
+        .len = 0,
+        .cap = 0,
+        .clients = NULL,
+    };
+}
+
+static ClientMap flagged_ips;
 
 char* to_lower(char* s)
 {
@@ -239,9 +376,22 @@ defer:
     return result;
 }
 
-int create_response(Arena *arena, Response *response, const Request* request)
+int create_response(Arena *arena, const int client_fd, Response *response, const Request* request)
 {
     int result = 0;
+	struct sockaddr_in client_addr;
+    unsigned int client_addr_len;
+    error_defer(getsockname(client_fd, (struct sockaddr *) &client_addr, &client_addr_len));
+    char* ip_addr = inet_ntoa(client_addr.sin_addr);
+    Client client = {ip_addr, 1};
+    Client* flagged_ip = cm_get(&flagged_ips, client);
+    if(flagged_ip && flagged_ip->strikes >= 3)
+    {
+        log_fmt(LOG_KIND_WARNING, "request from banned ip [%s] denied", ip_addr);
+        result = -1;
+        goto defer;
+    }
+
     assert_non_null(request->target);
     response->version =  "HTTP/1.1 ";
     response->headers = hm_init(arena);
@@ -281,7 +431,16 @@ int create_response(Arena *arena, Response *response, const Request* request)
         response->status  = RES_NOT_FOUND;
         response->headers = NULL;
         response->body    = NULL;
-        log_fmt(LOG_KIND_ERROR, "request->target %s not found", request->target);
+        log_fmt(LOG_KIND_ERROR, "request->target %s by ip %s not found", request->target, ip_addr);
+        if(flagged_ip)
+        {
+            flagged_ip->strikes += 1;
+        }
+        else
+        {
+            client.addr = strdup(ip_addr);
+            cm_insert(&flagged_ips, client);
+        }
     }
 defer:
     return result;
@@ -325,18 +484,20 @@ defer:
 
 void* process_request(void* arg)
 {
-	log_fmt(LOG_KIND_INFO, "Client connected");
+    int result = 0;
     const int client_fd = *(int*)arg;
     Arena arena = {0};
-    int result = 0;
     char buffer[1024] = {0};
+
+    log_fmt(LOG_KIND_INFO, "Client connected");
+
     error_defer(recv(client_fd, buffer, sizeof(buffer), 0));
 
     Request request = {0};
     error_defer(parse_request(&arena, &request, buffer));
 
     Response response = {0};
-    error_defer(create_response(&arena, &response, &request));
+    error_defer(create_response(&arena, client_fd, &response, &request));
 
     error_defer(send_response(&arena, client_fd, &response));
 	log_fmt(LOG_KIND_INFO, "Response message sent");
@@ -358,8 +519,8 @@ int main()
     signal(SIGTERM, handle_signal);
     int server_fd = 0, result = 0;
     unsigned int client_addr_len;
+    flagged_ips = cm_create();
 
-	struct sockaddr_in client_addr;
 	server_fd = socket(AF_INET, SOCK_STREAM, 0);
 	if (server_fd == -1)
     {
@@ -370,19 +531,19 @@ int main()
 	error_defer(setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse)));
 
 	struct sockaddr_in serv_addr = { .sin_family = AF_INET ,
-									 .sin_port = htons(80),
+									 .sin_port = htons(4221),
 									 .sin_addr = { htonl(INADDR_ANY) },
 									};
 	error_defer(bind(server_fd, (struct sockaddr *) &serv_addr, sizeof(serv_addr)));
 
 	int connection_backlog = 5;
 	error_defer(listen(server_fd, connection_backlog));
-    log_fmt(LOG_KIND_INFO, "Listening on port: 80");
+    log_fmt(LOG_KIND_INFO, "Listening on port: 4221");
 
+	struct sockaddr_in client_addr;
 	client_addr_len = sizeof(client_addr);
     while(running)
     {
-        log_fmt(LOG_KIND_INFO, "Waiting for a client to connect...\r");
         int client_fd;
         if((client_fd = accept(server_fd, (struct sockaddr *) &client_addr, &client_addr_len)) < 0)
         {
@@ -403,5 +564,6 @@ defer:
     {
         close(server_fd);
     }
+    cm_destroy(&flagged_ips);
 	return result;
 }
