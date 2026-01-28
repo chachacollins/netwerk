@@ -430,6 +430,13 @@ int create_response(Arena *arena, const int client_fd, Response *response, const
         hm_insert(response->headers, (Header) {"Content-Length", content_len});
         response->body = user_agent->value;
     }
+    else if(strncmp(request->target, "/favicon.ico", 12) == 0)
+    {
+        response->status  = RES_NOT_FOUND;
+        response->headers = NULL;
+        response->body    = NULL;
+        log_fmt(LOG_KIND_ERROR, "request target urmom by ip not found");
+    }
     else
     {
         response->status  = RES_NOT_FOUND;
