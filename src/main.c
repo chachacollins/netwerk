@@ -18,6 +18,10 @@
 #define STI_IMPLEMENTATION
 #include "sti.h"
 
+#define LOG_IMPLEMENTATION
+#define LOG_USE_COLOR
+#include "log.h"
+
 #ifdef LOCAL
 #define PORT 4221
 #elif DEV
@@ -26,31 +30,6 @@
 
 volatile sig_atomic_t running = 1;
 
-typedef enum
-{
-    LOG_KIND_ERROR,
-    LOG_KIND_WARNING,
-    LOG_KIND_SUCCESS,
-    LOG_KIND_INFO,
-} LOG_KIND;
-
-void log_fmt(LOG_KIND kind, char* fmt, ...)
-{
-    va_list ap;
-    va_start(ap, fmt);
-    switch(kind)
-    {
-        case LOG_KIND_ERROR  : fprintf(stderr, "[ERROR]: "); break;
-        case LOG_KIND_WARNING: fprintf(stderr, "[WARNING]: "); break;
-        case LOG_KIND_SUCCESS: fprintf(stderr, "[SUCCESS]: "); break;
-        case LOG_KIND_INFO   : fprintf(stderr, "[INFO]: "); break;
-        default: assert(0 && "Unreachable");
-    }
-    vfprintf(stderr, fmt, ap);
-    fprintf(stderr, "\n");
-    va_end(ap);
-}
-
 char* read_file(Arena* arena, const char* filepath)
 {
     char* buffer = NULL;
@@ -58,20 +37,20 @@ char* read_file(Arena* arena, const char* filepath)
     FILE *file = fopen(filepath, "rb");
     if(!file)
     {
-        log_fmt(LOG_KIND_ERROR, "could not open %s: %s", filepath, strerror(errno));
+        log_error("could not open %s: %s", filepath, strerror(errno));
         result = 0;
         goto defer;
     }
     if(fseek(file, 0, SEEK_END) < 0)
     {
-        log_fmt(LOG_KIND_ERROR, "could not seek_end %s: %s", filepath, strerror(errno));
+        log_error("could not seek_end %s: %s", filepath, strerror(errno));
         result = 0;
         goto defer;
     }
     size_t file_size = ftell(file);
     if(fseek(file, 0, SEEK_SET) < 0)
     {
-        log_fmt(LOG_KIND_ERROR, "could not seek_set %s: %s\n", filepath, strerror(errno));
+        log_error("could not seek_set %s: %s\n", filepath, strerror(errno));
         result = 0;
         goto defer;
     }
@@ -79,7 +58,7 @@ char* read_file(Arena* arena, const char* filepath)
     size_t read_bytes = fread(buffer, sizeof(char), file_size, file);
     if(read_bytes < file_size)
     {
-        log_fmt(LOG_KIND_ERROR, "could not read bytes %s", filepath);
+        log_error("could not read bytes %s", filepath);
         result = 0;
         goto defer;
     }
@@ -98,23 +77,23 @@ void handle_signal(int sig)
     running = 0;
 }
 
-#define error_defer(func)                                                                      \
-    do                                                                                         \
-    {                                                                                          \
-       if((func) < 0)                                                                          \
-       {                                                                                       \
-           log_fmt(LOG_KIND_ERROR,__FILE__ ":%d:" #func " %s", __LINE__, strerror(errno));     \
-           result = -1;                                                                        \
-           goto defer;                                                                         \
-       }                                                                                       \
-    }                                                                                          \
+#define error_defer(func)                                                                             \
+    do                                                                                                \
+    {                                                                                                 \
+       if((func) < 0)                                                                                 \
+       {                                                                                              \
+           log_error(__FILE__ ":%d:" #func " %s", __LINE__, strerror(errno));                         \
+           result = -1;                                                                               \
+           goto defer;                                                                                \
+       }                                                                                              \
+    }                                                                                                 \
     while(0)
 #define assert_non_null(expr)                                                                         \
     do                                                                                                \
     {                                                                                                 \
         if((expr) == NULL)                                                                            \
         {                                                                                             \
-           log_fmt(LOG_KIND_ERROR,__FILE__ ":%d:" #expr " is expected to be not null", __LINE__);     \
+           log_error(__FILE__ ":%d:" #expr " is expected to be not null", __LINE__);                  \
            result = -1;                                                                               \
            goto defer;                                                                                \
         }                                                                                             \
@@ -397,7 +376,7 @@ int create_response(Arena *arena, const int client_fd, Response *response, const
     Client* flagged_ip = cm_get(&flagged_ips, client);
     if(flagged_ip && flagged_ip->strikes >= 3)
     {
-        log_fmt(LOG_KIND_WARNING, "request from banned ip [%s] denied", ip_addr);
+        log_warn("request from banned ip [%s] denied", ip_addr);
         result = -1;
         goto defer;
     }
@@ -441,14 +420,14 @@ int create_response(Arena *arena, const int client_fd, Response *response, const
         response->status  = RES_NOT_FOUND;
         response->headers = NULL;
         response->body    = NULL;
-        log_fmt(LOG_KIND_ERROR, "request target urmom by ip not found");
+        log_error("request->target %s by ip [%s] not found", request->target, ip_addr);
     }
     else
     {
         response->status  = RES_NOT_FOUND;
         response->headers = NULL;
         response->body    = NULL;
-        log_fmt(LOG_KIND_ERROR, "request->target %s by ip %s not found", request->target, ip_addr);
+        log_error("request->target %s by ip [%s] not found", request->target, ip_addr);
         if(flagged_ip)
         {
             flagged_ip->strikes += 1;
@@ -506,7 +485,7 @@ void* process_request(void* arg)
     Arena arena = {0};
     char buffer[1024] = {0};
 
-    log_fmt(LOG_KIND_INFO, "Client connected");
+    log_info("Client connected");
 
     error_defer(recv(client_fd, buffer, sizeof(buffer), 0));
 
@@ -517,11 +496,11 @@ void* process_request(void* arg)
     error_defer(create_response(&arena, client_fd, &response, &request));
 
     error_defer(send_response(&arena, client_fd, &response));
-	log_fmt(LOG_KIND_INFO, "Response message sent");
+	log_info("Response message sent");
 defer:
     close(client_fd);
     free((int*)arg);
-    log_fmt(LOG_KIND_INFO, "Connection closed");
+    log_info("Connection closed");
     arena_free(&arena);
     //TODO: figure out what to do with the result
     (void)result;
@@ -541,7 +520,7 @@ int main()
 	server_fd = socket(AF_INET, SOCK_STREAM, 0);
 	if (server_fd == -1)
     {
-		log_fmt(LOG_KIND_ERROR, "Socket creation failed: %s...\n", strerror(errno));
+		log_error("Socket creation failed: %s...\n", strerror(errno));
 		return 1;
 	}
 	int reuse = 1;
@@ -555,7 +534,7 @@ int main()
 
 	int connection_backlog = 5;
 	error_defer(listen(server_fd, connection_backlog));
-    log_fmt(LOG_KIND_INFO, "Listening on port: %d", PORT);
+    log_info("Listening on port: %d", PORT);
 
 	struct sockaddr_in client_addr;
 	client_addr_len = sizeof(client_addr);
@@ -564,7 +543,7 @@ int main()
         int client_fd;
         if((client_fd = accept(server_fd, (struct sockaddr *) &client_addr, &client_addr_len)) < 0)
         {
-            log_fmt(LOG_KIND_WARNING, "Failed to accept connection: %s", strerror(errno));
+            log_warn("Failed to accept connection: %s", strerror(errno));
             continue;
         }
         //TODO: implement a thread pool or event loop
@@ -575,7 +554,7 @@ int main()
         pthread_create(&thread, NULL, process_request, new_sock);
         pthread_detach(thread);
     }
-    log_fmt(LOG_KIND_INFO, "Shutting down server");
+    log_info("Shutting down server");
 defer:
     if(server_fd)
     {
