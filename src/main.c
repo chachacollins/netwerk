@@ -82,18 +82,19 @@ void handle_signal(int sig)
     {                                                                                                 \
        if((func) < 0)                                                                                 \
        {                                                                                              \
-           log_error(__FILE__ ":%d:" #func " %s", __LINE__, strerror(errno));                         \
+           log_error(""#func " %s",strerror(errno));                                                  \
            result = -1;                                                                               \
            goto defer;                                                                                \
        }                                                                                              \
     }                                                                                                 \
     while(0)
+
 #define assert_non_null(expr)                                                                         \
     do                                                                                                \
     {                                                                                                 \
         if((expr) == NULL)                                                                            \
         {                                                                                             \
-           log_error(__FILE__ ":%d:" #expr " is expected to be not null", __LINE__);                  \
+           log_error("" #expr " is expected to be not null");                                         \
            result = -1;                                                                               \
            goto defer;                                                                                \
         }                                                                                             \
